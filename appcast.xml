@@ -6,18 +6,18 @@
     <description>Builds of alt-tab-macos with the Pro gating removed.</description>
     <language>en</language>
     <item>
-      <title>11.6.0</title>
-      <pubDate>Sun, 06 Sep 2026 11:20:28 GMT</pubDate>
-      <sparkle:version>11.6.0</sparkle:version>
-      <sparkle:shortVersionString>11.6.0</sparkle:shortVersionString>
+      <title>11.6.1</title>
+      <pubDate>Sat, 12 Sep 2026 11:14:50 GMT</pubDate>
+      <sparkle:version>11.6.1</sparkle:version>
+      <sparkle:shortVersionString>11.6.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>12.0</sparkle:minimumSystemVersion>
-      <sparkle:releaseNotesLink>https://github.com/filipef101/alt-tab-macos-free/releases/tag/v11.6.0-unlocked</sparkle:releaseNotesLink>
-      <enclosure url="https://github.com/filipef101/alt-tab-macos-free/releases/download/v11.6.0-unlocked/AltTab-11.6.0-unlocked.zip"
-                 sparkle:version="11.6.0"
-                 sparkle:shortVersionString="11.6.0"
-                 length="5306099"
+      <sparkle:releaseNotesLink>https://github.com/filipef101/alt-tab-macos-free/releases/tag/v11.6.1-unlocked</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/filipef101/alt-tab-macos-free/releases/download/v11.6.1-unlocked/AltTab-11.6.1-unlocked.zip"
+                 sparkle:version="11.6.1"
+                 sparkle:shortVersionString="11.6.1"
+                 length="5336296"
                  type="application/octet-stream"
-                 sparkle:edSignature="kIJjFRkuWX5ZWssBZr+qC6IlqNa0Xc69aTVT88xFKDyeQrEv5G7WapIYOagnf0J05UsoCq7Hn4ZIskUpuRFQAA==" />
+                 sparkle:edSignature="IB7FIPCTuQbCYefFWDEdOVU5CvVKdqX2VbmekKI9wFJtWlWfOU6PgbeoKWwKDTDGUv8oiSQePnFv8M2urAM+Cg==" />
     </item>
   </channel>
 </rss>
