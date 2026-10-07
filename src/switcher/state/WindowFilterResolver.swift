@@ -1,0 +1,99 @@
+import Foundation
+
+/// Decides whether a single window is shown to the user in the switcher, given the per-shortcut
+/// filter preferences and the surrounding context. Pure kernel: takes the window's `WindowState`,
+/// the app's `ApplicationState`, the dropdown booleans (defaulted to `false` so tests only spell out
+/// what they exercise), the runtime context (frontmost pid, visible spaces, exceptions), and a
+/// **lazy** `isOnPreferredScreen` — the one fact that's irreducibly OS-coupled (`Window.isOnScreen`
+/// touches `Spaces.screenSpacesMap` + multi-screen quartz math) — and a **lazy** `isUnderCursor` (the
+/// window's frame against the cursor, which `WindowState` doesn't carry). Everything else is a pure
+/// expression over the inputs, evaluated inline so `&&` short-circuits exactly like the original.
+enum WindowFilterResolver {
+    /// True iff the window passes every active filter. Mirrors the original predicate term-for-term;
+    /// `isOnPreferredScreen` is an `@autoclosure` so the (relatively expensive) OS call only fires
+    /// when the short-circuit reaches it — phantom / hidden / windowless windows never trigger it.
+    static func shouldShow(_ s: WindowState, _ app: ApplicationState,
+                           onlyFrontmostApp: Bool = false,       // appsToShow == .active
+                           excludeFrontmostApp: Bool = false,    // appsToShow == .nonActive
+                           onlyUnderCursor: Bool = false,        // appsToShow == .underCursor
+                           onlyAppUnderCursor: Bool = false,     // appsToShow == .appUnderCursor
+                           hideHidden: Bool = false,             // showHiddenWindows == .hide
+                           hideWindowless: Bool = false,         // showWindowlessApps == .hide
+                           hideFullscreen: Bool = false,         // showFullscreenWindows == .hide
+                           hideMinimized: Bool = false,          // showMinimizedWindows == .hide
+                           onlyVisibleSpaces: Bool = false,      // spacesToShow == .visible
+                           onlyNonVisibleSpaces: Bool = false,   // spacesToShow == .nonVisible
+                           onlyPreferredScreen: Bool = false,    // screensToShow == .showingAltTab
+                           separateTabs: Bool = false,           // groupTabs == .separateWindows
+                           frontmostPid: pid_t? = nil,
+                           pidUnderCursor: pid_t? = nil,         // nil: nothing is under the cursor
+                           visibleSpaceIds: [UInt64] = [],       // CGSSpaceID === UInt64
+                           exceptions: [ExceptionEntry] = [],
+                           isOnPreferredScreen: @autoclosure () -> Bool,
+                           isUnderCursor: @autoclosure () -> Bool = false) -> Bool {
+        !s.isPhantom &&
+            // Pointing at an app is as explicit as focusing it, so it also overrides the Exceptions list (#5810).
+            !ExceptionMatcher.hidesWindow(s, app, exceptions: exceptions,
+                activeAppOverride: (onlyFrontmostApp && frontmostPid == app.pid) || (onlyAppUnderCursor && pidUnderCursor == app.pid)) &&
+            !(onlyFrontmostApp && !(frontmostPid == app.pid)) &&
+            !(onlyAppUnderCursor && !(pidUnderCursor == app.pid)) &&
+            !(excludeFrontmostApp && frontmostPid == app.pid) &&
+            !(hideHidden && app.isHidden) &&
+            ((!hideWindowless && !onlyUnderCursor && s.isWindowlessApp) ||
+                !s.isWindowlessApp &&
+                !(hideFullscreen && s.isFullscreen) &&
+                !(hideMinimized && s.isMinimized) &&
+                // A held tab (kept visible through the new-tab discovery gap) just backgrounded on the
+                // CURRENT visible Space, so it is Space-less yet belongs on-screen. `isPhantom` already
+                // exempts it, but these Space/screen gates are SEPARATE and would still hide it — the exact
+                // vanish that defeated the hold on the FIRST tab of a window, where no group exists yet to
+                // borrow it a Space (live capture 2026-07-24: `(h)…sp[]` dumped with a `-` prefix). Treat
+                // it as "on the visible Space and preferred screen": shows under `.visible`, hidden under
+                // `.nonVisible`, and never dropped by the preferred-screen gate. See `isSpacelessHold`.
+                !(onlyVisibleSpaces && !isSpacelessHold(s) && !inAnyVisibleSpace(s, visibleSpaceIds)) &&
+                !(onlyNonVisibleSpaces && (isSpacelessHold(s) || inAnyVisibleSpace(s, visibleSpaceIds))) &&
+                !(onlyPreferredScreen && !isSpacelessHold(s) && !isOnPreferredScreen()) &&
+                (separateTabs || !s.isTabbed) &&
+                !(onlyUnderCursor && (!canBeUnderCursor(s, app, visibleSpaceIds) || !isUnderCursor())))
+    }
+
+    /// Whether the window's frame is drawn on screen, so it can be what the user points at. A minimized
+    /// window, a hidden app's window, or a window on another Space still has a stored frame that may contain
+    /// the cursor, but nothing is drawn there. A windowless placeholder has no frame at all.
+    private static func canBeUnderCursor(_ s: WindowState, _ app: ApplicationState, _ visibleSpaceIds: [UInt64]) -> Bool {
+        !s.isPhantom && !s.isWindowlessApp && !s.isMinimized && !app.isHidden && isOnVisibleSpace(s, visibleSpaceIds)
+    }
+
+    /// The app owning the frontmost window drawn at `point`, given the WindowServer's on-screen windows front
+    /// to back. Only the normal window layer counts: the menu bar, the Dock, AltTab's own panels and screen
+    /// overlays all sit above it, and a fully transparent window draws nothing the user could point at.
+    static func pidUnderCursor(_ point: CGPoint, _ frontToBack: [OnScreenWindow]) -> pid_t? {
+        frontToBack.first { $0.layer == 0 && $0.alpha > 0 && $0.bounds.contains(point) }?.pid
+    }
+
+    /// A Space-less held tab counts as on the visible Space (see the Space gates above).
+    private static func isOnVisibleSpace(_ s: WindowState, _ visibleSpaceIds: [UInt64]) -> Bool {
+        isSpacelessHold(s) || inAnyVisibleSpace(s, visibleSpaceIds)
+    }
+
+    /// The hold stands in for a Space only while the window has none. A window entering fullscreen can be
+    /// held too (it leaves its Space before joining the new one, while the transition creates windows), and
+    /// that hold can run to its 20s cap; it holds a real Space by then, on whichever screen it went
+    /// fullscreen, so the gates must judge it by that Space (#6087).
+    private static func isSpacelessHold(_ s: WindowState) -> Bool {
+        s.isHeldVisibleForTab && s.spaceIds.isEmpty
+    }
+
+    private static func inAnyVisibleSpace(_ s: WindowState, _ visibleSpaceIds: [UInt64]) -> Bool {
+        visibleSpaceIds.contains { visibleSpace in s.spaceIds.contains { $0 == visibleSpace } }
+    }
+}
+
+/// One entry of `CGWindowListCopyWindowInfo`, reduced to what `WindowFilterResolver.pidUnderCursor` reads.
+/// `bounds` is in Quartz coordinates, like the cursor it is tested against.
+struct OnScreenWindow {
+    let pid: pid_t
+    let layer: Int
+    let alpha: Double
+    let bounds: CGRect
+}
